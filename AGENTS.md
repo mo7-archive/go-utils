@@ -59,7 +59,7 @@ func (s *Server) Example(opt OptType) (resData resDataType, resErr error) {
 
 	jsonByte, err := ToByte(val)
 	if err != nil {
-		resErr = fmt.Errorf("err:xx.Example|ToByte|%w", err)
+		resErr = fmt.Errorf("err:xx.Example.ToByte|%w", err)
 		return
 	}
 

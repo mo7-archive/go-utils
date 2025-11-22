@@ -42,6 +42,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -199,19 +200,15 @@ func (l *Logger) log(levelName string, lvl slog.Level, msg string, kv ...any) {
 		}
 		return
 	}
-	// 将 kv 转为 slog attrs
+	// 不再按 key/value 配对处理 kv 参数。
+	// 将 kv 原样作为单个属性传递给 slog，字段名为 "args"。
 	var attrs []slog.Attr
-	if len(kv)%2 != 0 {
-		// 如果 kv 不成对，最后一个作为 message 的一部分
-		kv = append(kv, "")
-	}
-	for i := 0; i < len(kv); i += 2 {
-		k, _ := kv[i].(string)
-		if k == "" {
-			continue
+	if len(kv) > 0 {
+		if len(kv) == 1 {
+			attrs = append(attrs, slog.Any("args", kv[0]))
+		} else {
+			attrs = append(attrs, slog.Any("args", kv))
 		}
-		v := kv[i+1]
-		attrs = append(attrs, slog.Any(k, v))
 	}
 	logger.LogAttrs(context.Background(), lvl, msg, attrs...)
 }
@@ -254,6 +251,8 @@ func (l *Logger) Clear(opt ClearOpt) (err error) {
 		return
 	}
 	cutoff := time.Now().AddDate(0, 0, -before)
+	// 正则用来匹配文件名中的日期部分 YYYY-MM-DD
+	dateRe := regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
 	for _, fi := range files {
 		if fi.IsDir() {
 			continue
@@ -263,21 +262,23 @@ func (l *Logger) Clear(opt ClearOpt) (err error) {
 		if !strings.HasPrefix(name, l.cfg.Name+"-") || !strings.HasSuffix(name, ".log") {
 			continue
 		}
-		parts := strings.Split(name, "-")
-		if len(parts) < 3 {
+		// 提取日期（更鲁棒，支持文件名中可能存在多余的短横）
+		datePart := dateRe.FindString(name)
+		if datePart == "" {
 			continue
 		}
-		t := parts[1]
+		d, perr := time.Parse("2006-01-02", datePart)
+		if perr != nil {
+			continue
+		}
+		// 提取日志类型：去掉前缀和后缀，再移除日期部分前的短横
+		tPart := strings.TrimPrefix(name, l.cfg.Name+"-")
+		tPart = strings.TrimSuffix(tPart, ".log")
+		t := strings.TrimSuffix(tPart, "-"+datePart)
 		if !clearAllTypes {
 			if _, ok := typesMap[t]; !ok {
 				continue
 			}
-		}
-		datePart := parts[len(parts)-1]
-		datePart = strings.TrimSuffix(datePart, ".log")
-		d, perr := time.Parse("2006-01-02", datePart)
-		if perr != nil {
-			continue
 		}
 		if d.Before(cutoff) {
 			p := filepath.Join(l.cfg.Path, name)

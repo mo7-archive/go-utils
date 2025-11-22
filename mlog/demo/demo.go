@@ -20,10 +20,6 @@ func SetLog() {
 		Stdout: true,
 	})
 
-	// myLog.Clear(mlog.ClearOpt{
-	// 	Clear:  []string{"debug", "warn"},
-	// 	Before: 7,
-	// })
 	// 清理示例：删除 7 天之前的 debug 和 warn 日志
 	// fmt.Println("clear error:")
 
@@ -47,8 +43,24 @@ func main() {
 		Gender: "male",
 	}
 
+	user2 := User{
+		Name:   "张三",
+		Age:    23,
+		Gender: "sex",
+	}
+
 	myLog.Info("this is info")
 	myLog.Warn("this is warn")
 	myLog.Error("this is error")
-	myLog.Debug("this is debug", user)
+	myLog.Debug("this is debug1", user)
+	myLog.Debug("this is debug2", user, user2)
+	myLog.Debug("this is debug3", user, "user=", user2)
+	myLog.Debug("this is debug3", "user=", user, "user2=", user2)
+
+	myLog.Clear(mlog.ClearOpt{
+		Clear:  []string{},
+		Before: 1,
+	})
+
+	myLog.Debug("日志文件已删除")
 }

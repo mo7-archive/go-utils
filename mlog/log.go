@@ -2,135 +2,304 @@ package mlog
 
 /*
 
-myLog := mlog.New(mlog.Config{
-	Path: "./logs",
-	Name: "log",
+以如下 Api 基于 标准库 slog 封装一个日志库。
+
+myLog := mlog.New(Config{
+	Path: "./logs",  // 日志存放路径
+	Name: "log",  // 日志文件名前缀
+	Level: slog.LevelDebug, // 日志级别，参考 slog 的日志级别
+	Stdout: true, // 是否输出到控制台，为 true 则输出到控制台和文件，为 false 则只输出到文件
 })
-myLog.Info("this is info")
+
+myLog.Info("this is info","user","mo7")
 myLog.Warn("this is warn")
 myLog.Error("this is error")
 myLog.Debug("this is debug")
 
+不同的日志类型会创建不同的文件，name-日志类型-日期.log，如下
+log-info-2006-01-02.log
+log-warn-2006-01-02.log
+log-error-2006-01-02.log
+log-debug-2006-01-02.log
+
+日志内容为 json 格式，使用 slog 的 api 格式化
+日志文件按天切割，每天一个文件
+日志输出为文件的时候 也是采用的 slog 的 api
+
+清理日志文件的Api
+myLog.Clear(ClearOpt{
+	Clear:   []string{"debug", "warn"}, // 需要清理的日志类型，为空 则清理所有类型
+	Before: 7,  // 删除几天之前的日志，默认为 7
+})
+ClearType 是以文件名为基准的
+
 */
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/m-startgo/go-utils/mfile"
-	"github.com/m-startgo/go-utils/mpath"
-	"github.com/m-startgo/go-utils/mtime"
 )
 
-// Logger 是简单日志器的实例。它负责根据名称、类型和日期将日志写入文件。
-type Logger struct {
-	Path string // 存放日志的目录，默认为 ./logs
-	Name string // 日志名称，默认为 log
-
-	mu sync.Mutex // 写入时的互斥
-}
-
-// Config 用于构造 Logger 的配置。
+// Config: 日志配置
 type Config struct {
-	Path string
-	Name string
+	Path   string     // 日志存放路径
+	Name   string     // 日志文件名前缀
+	Level  slog.Level // 日志级别
+	Stdout bool       // 是否同时输出到控制台
 }
 
-// ClearOpt 表示清理日志的参数。
+// ClearOpt: 清理选项
 type ClearOpt struct {
-	Type   []string // 要删除的日志类型，为空则删除全部类型
-	Before int      // 保留多少天之前的日志会被删除（天数），为空或<=0 则默认90
+	Clear  []string // 需要清理的日志类型，为空则清理所有类型
+	Before int      // 删除几天之前的日志，默认为 7
 }
 
-// validTypes 是允许的日志类型集合。
-var validTypes = map[string]struct{}{
-	"info":  {},
-	"warn":  {},
-	"error": {},
-	"debug": {},
+// Logger: 日志对象
+type Logger struct {
+	cfg         Config
+	mu          sync.Mutex
+	files       map[string]*os.File     // 每种类型对应的文件
+	loggers     map[string]*slog.Logger // 每种类型的 slog logger
+	currentDate string
 }
 
-// New 根据传入的配置创建并返回一个 Logger 实例。
-// 如果 Path 为空则使用 ./logs；如果 Name 为空则使用 log。
-func New(cfg Config) *Logger {
-	p := cfg.Path
-	if strings.TrimSpace(p) == "" {
-		p = "./logs"
+// 默认的日志类型顺序及名称
+var logTypes = []string{"debug", "info", "warn", "error"}
+
+// New: 创建 Logger
+// 如果 Path/Name 未设置将使用默认值
+func New(cfg Config) (l *Logger) {
+	if cfg.Path == "" {
+		cfg.Path = "./logs"
 	}
-	n := cfg.Name
-	if strings.TrimSpace(n) == "" {
-		n = "log"
+	if cfg.Name == "" {
+		cfg.Name = "log"
 	}
-	// 若目录不存在，mfile.Write/Append 会尝试创建；但这里提前创建以便行为更明确
-	if !mpath.IsExist(p) {
-		_ = os.MkdirAll(p, 0o755)
+	// 注意：slog 的 Level 值中 `LevelInfo == 0`，不能把 0 误当作“未设置”。
+	// 不在此处强制覆盖为 Debug，保留调用方传入的值。
+
+	_ = os.MkdirAll(cfg.Path, 0o755)
+
+	l = &Logger{
+		cfg:     cfg,
+		files:   make(map[string]*os.File),
+		loggers: make(map[string]*slog.Logger),
 	}
-	return &Logger{Path: p, Name: n}
+	l.currentDate = time.Now().Format("2006-01-02")
+
+	for _, t := range logTypes {
+		f, err := l.openLogFile(t, l.currentDate)
+		if err != nil {
+			// 如果创建文件失败，退回到 stdout 以免丢日志
+			if cfg.Stdout {
+				handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.Level})
+				l.loggers[t] = slog.New(handler)
+			}
+			continue
+		}
+		l.files[t] = f
+		var w io.Writer = f
+		if cfg.Stdout {
+			w = io.MultiWriter(f, os.Stdout)
+		}
+		handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: cfg.Level})
+		l.loggers[t] = slog.New(handler)
+	}
+
+	return
 }
 
-// formatLine 将要写入日志文件的单行格式化。
-func formatLine(level string, v ...any) string {
-	ts := mtime.Now().FormatDefault()
-	msg := fmt.Sprintln(v...)
-	// 去掉 Sprintln 带来的末尾换行，统一以单行记录（末尾保留换行用于文件分隔）
-	msg = strings.TrimRight(msg, "\n")
-	return fmt.Sprintf("[%s] [%s] %s\n", ts, strings.ToUpper(level), msg)
+// openLogFile: 根据类型与日期打开对应的日志文件（追加模式）
+func (l *Logger) openLogFile(level, date string) (*os.File, error) {
+	name := fmt.Sprintf("%s-%s-%s.log", l.cfg.Name, level, date)
+	path := filepath.Join(l.cfg.Path, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
 }
 
-// logToFile 将格式化后的行追加到对应类型的日志文件中。
-func (l *Logger) logToFile(typ string, line string) error {
-	// guard against nil receiver
-	if l == nil {
-		return fmt.Errorf("err:mlog.logToFile|nil logger")
+// ensureDate: 检查日期是否变化，若变化则按天切割并重建 logger
+func (l *Logger) ensureDate() {
+	nowDate := time.Now().Format("2006-01-02")
+	if nowDate == l.currentDate {
+		return
 	}
-
-	if typ == "" {
-		typ = "info"
-	}
-
-	// protect against empty Path/Name
-	path := strings.TrimSpace(l.Path)
-	if path == "" {
-		path = "./logs"
-	}
-	name := strings.TrimSpace(l.Name)
-	if name == "" {
-		name = "log"
-	}
-
-	// ensure directory exists
-	if !mpath.IsExist(path) {
-		_ = os.MkdirAll(path, 0o755)
-	}
-
-	date := mtime.FromTime(time.Now()).Format("YYYY-MM-DD")
-	filename := fmt.Sprintf("%s-%s-%s.log", name, typ, date)
-	fp := filepath.Join(path, filename)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return mfile.Append(fp, line)
+	if nowDate == l.currentDate {
+		return
+	}
+	// 关闭旧文件
+	for _, f := range l.files {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
+	l.files = make(map[string]*os.File)
+	l.loggers = make(map[string]*slog.Logger)
+	l.currentDate = nowDate
+	for _, t := range logTypes {
+		f, err := l.openLogFile(t, l.currentDate)
+		if err != nil {
+			if l.cfg.Stdout {
+				handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: l.cfg.Level})
+				l.loggers[t] = slog.New(handler)
+			}
+			continue
+		}
+		l.files[t] = f
+		var w io.Writer = f
+		if l.cfg.Stdout {
+			w = io.MultiWriter(f, os.Stdout)
+		}
+		handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: l.cfg.Level})
+		l.loggers[t] = slog.New(handler)
+	}
 }
 
-// Info 写一条 info 级别的日志。
-func (l *Logger) Info(v ...any) error {
-	return l.logToFile("info", formatLine("info", v...))
+// levelPriority: 给定 slog.Level 返回优先级（数值越大越严重）
+func levelPriority(lvl slog.Level) int {
+	switch lvl {
+	case slog.LevelDebug:
+		return 0
+	case slog.LevelInfo:
+		return 1
+	case slog.LevelWarn:
+		return 2
+	case slog.LevelError:
+		return 3
+	default:
+		return 1
+	}
 }
 
-// Warn 写一条 warn 级别的日志。
-func (l *Logger) Warn(v ...any) error {
-	return l.logToFile("warn", formatLine("warn", v...))
+// log 内部通用方法
+func (l *Logger) log(levelName string, lvl slog.Level, msg string, kv ...any) {
+	// 级别过滤
+	if levelPriority(lvl) < levelPriority(l.cfg.Level) {
+		return
+	}
+	l.ensureDate()
+	l.mu.Lock()
+	logger, ok := l.loggers[levelName]
+	l.mu.Unlock()
+	if !ok || logger == nil {
+		// 兜底：输出到 stdout
+		if l.cfg.Stdout {
+			slog.Default().LogAttrs(context.Background(), lvl, msg, slog.String("level", levelName))
+		}
+		return
+	}
+	// 将 kv 转为 slog attrs
+	var attrs []slog.Attr
+	if len(kv)%2 != 0 {
+		// 如果 kv 不成对，最后一个作为 message 的一部分
+		kv = append(kv, "")
+	}
+	for i := 0; i < len(kv); i += 2 {
+		k, _ := kv[i].(string)
+		if k == "" {
+			continue
+		}
+		v := kv[i+1]
+		attrs = append(attrs, slog.Any(k, v))
+	}
+	logger.LogAttrs(context.Background(), lvl, msg, attrs...)
 }
 
-// Error 写一条 error 级别的日志。
-func (l *Logger) Error(v ...any) error {
-	return l.logToFile("error", formatLine("error", v...))
+// Info: 记录 info 日志
+func (l *Logger) Info(msg string, kv ...any) {
+	l.log("info", slog.LevelInfo, msg, kv...)
 }
 
-// Debug 写一条 debug 级别的日志。
-func (l *Logger) Debug(v ...any) error {
-	return l.logToFile("debug", formatLine("debug", v...))
+// Warn: 记录 warn 日志
+func (l *Logger) Warn(msg string, kv ...any) {
+	l.log("warn", slog.LevelWarn, msg, kv...)
+}
+
+// Error: 记录 error 日志
+func (l *Logger) Error(msg string, kv ...any) {
+	l.log("error", slog.LevelError, msg, kv...)
+}
+
+// Debug: 记录 debug 日志
+func (l *Logger) Debug(msg string, kv ...any) {
+	l.log("debug", slog.LevelDebug, msg, kv...)
+}
+
+// Clear: 清理日志文件（按文件名中日期）
+func (l *Logger) Clear(opt ClearOpt) (err error) {
+	before := 7
+	if opt.Before > 0 {
+		before = opt.Before
+	}
+	clearAllTypes := len(opt.Clear) == 0
+	typesMap := map[string]struct{}{}
+	for _, t := range opt.Clear {
+		typesMap[t] = struct{}{}
+	}
+
+	files, e := os.ReadDir(l.cfg.Path)
+	if e != nil {
+		err = fmt.Errorf("err:mlog.Clear|ReadDir|%w", e)
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -before)
+	for _, fi := range files {
+		if fi.IsDir() {
+			continue
+		}
+		name := fi.Name()
+		// 期望格式: name-type-2006-01-02.log
+		if !strings.HasPrefix(name, l.cfg.Name+"-") || !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		parts := strings.Split(name, "-")
+		if len(parts) < 3 {
+			continue
+		}
+		t := parts[1]
+		if !clearAllTypes {
+			if _, ok := typesMap[t]; !ok {
+				continue
+			}
+		}
+		datePart := parts[len(parts)-1]
+		datePart = strings.TrimSuffix(datePart, ".log")
+		d, perr := time.Parse("2006-01-02", datePart)
+		if perr != nil {
+			continue
+		}
+		if d.Before(cutoff) {
+			p := filepath.Join(l.cfg.Path, name)
+			if rerr := os.Remove(p); rerr != nil {
+				// 非致命，继续删除其他文件
+				_ = rerr
+			}
+		}
+	}
+	return
+}
+
+// Close: 关闭所有打开的日志文件
+func (l *Logger) Close() (err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, f := range l.files {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
+	l.files = nil
+	l.loggers = nil
+	return
 }

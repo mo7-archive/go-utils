@@ -25,6 +25,10 @@ go test ./mfile -run TestReaddir -v
 # 静态检查
 go vet ./...
 
+# 彻底更新依赖
+del-cli ./go.sum
+go get -u ./...
+go mod tidy
 ```
 
 ## 风格与规范

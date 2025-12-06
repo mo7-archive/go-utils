@@ -1,0 +1,167 @@
+{
+  "test_metadata": {
+    "id": 10086,
+    "name": "JSON解析全场景测试", //这里是带注释的
+    "version": "1.0.0",
+    "timestamp": 1735920000000,
+    "is_production": false,
+    // 这里带了尾随逗号
+    "description": "该文件覆盖JSON解析的所有核心场景：嵌套对象、多层数组、特殊字符、Unicode、转义符、空值、数字变体等"
+  },
+  //这里是 另一个注释
+  "user_info": {
+    "user_id": 9527,
+    "username": "test_user_🚀",
+    "nickname": "张三\"李四\\王五\n赵六\t钱七",
+    "email": "test+special_char@example.com",
+    "phone": "+86-13800138000",
+    "age": 28,
+    "height": 175.5,
+    "net_worth": -99999.99,
+    "is_verified": true,
+    "last_login": "2025-12-06T12:34:56.789Z",
+    "empty_field": "",
+    "null_field": null,
+
+    /* 这里是多行注释 */
+    "preferences": {
+      "theme": "dark_mode",
+      "language": "zh-CN",
+      "notifications": {
+        "email": true,
+        "sms": false,
+        "push": true,
+        "custom_rules": [
+          {
+            "event": "login",
+            "threshold": 5,
+            "actions": ["alert", "log"]
+          },
+          {
+            "event": "payment",
+            "threshold": 1e4,
+            "actions": []
+          }
+        ]
+      }
+    },
+    "addresses": [
+      {
+        "type": "home",
+        "province": "北京市",
+        "city": "北京市",
+        "district": "海淀区",
+        "detail": "中关村南大街5号",
+        "geo": {
+          "latitude": 39.9847,
+          "longitude": 116.3056,
+          "altitude": 50.2,
+          "precision": 0.0001
+        }
+      },
+      {
+        "type": "work",
+        "province": "上海市",
+        "city": "上海市",
+        "district": "浦东新区",
+        "detail": "张江高科技园区科苑路88号",
+        "geo": {
+          "latitude": 31.2156,
+          "longitude": 121.5083,
+          "altitude": null,
+          "precision": 1e-5
+        }
+      }
+    ],
+    "empty_object": {},
+    "unicode_demo": {
+      "emoji": "😀😂🤔🙏",
+      "chinese": "测试中文解析",
+      "japanese": "テスト日本語",
+      "korean": "테스트 한국어",
+      "special_symbols": "!@#$%^&*()_+-=[]{}|;':\",./<>?"
+    }
+  },
+  "order_history": [
+    {
+      "order_id": "ORD-20251206-001",
+      "amount": 1999.99,
+      "currency": "CNY",
+      "status": "paid",
+      "items": [
+        {
+          "sku": "PROD-001",
+          "name": "智能手表「顶配版」",
+          "price": 1299.99,
+          "quantity": 1,
+          "attributes": {
+            "color": "黑色",
+            "size": "46mm",
+            "features": ["心率监测", "GPS", "防水50米"]
+          }
+        },
+        {
+          "sku": "PROD-002",
+          "name": "充电线",
+          "price": 99.99,
+          "quantity": 2,
+          "attributes": {}
+        }
+      ],
+      "discounts": [
+        {
+          "type": "coupon",
+          "code": "JSON_TEST_2025",
+          "value": 200,
+          "is_applied": true
+        },
+        {
+          "type": "member_discount",
+          "value": 99.99,
+          "is_applied": true
+        }
+      ],
+      "payment": {
+        "method": "alipay",
+        "transaction_id": "2025120622001404100580009999",
+        "paid_at": "2025-12-06T10:20:30Z",
+        "refunded": false,
+        "refund_amount": 0.0
+      }
+    },
+    {
+      "order_id": "ORD-20251206-002",
+      "amount": 0.0,
+      "currency": "CNY",
+      "status": "cancelled",
+      "items": [],
+      "discounts": [],
+      "payment": null
+    }
+  ],
+  "nested_array_demo": [
+    [1, 2, 3],
+    ["a", "b", "c"],
+    [true, false, null],
+    [[{ "key1": "value1" }, { "key2": "value2" }], [[[[["deep_nested"]]]]]],
+    []
+  ],
+  "number_variants": {
+    "integer": 123456,
+    "negative_integer": -789,
+    "float": 3.1415926,
+    "negative_float": -2.71828,
+    "scientific_notation_positive": 1.23e4,
+    "scientific_notation_negative": -4.56e-7,
+    "zero": 0,
+    "zero_float": 0.0
+  },
+  "escaped_chars": {
+    "newline": "line1\nline2",
+    "tab": "col1\tcol2\tcol3",
+    "backslash": "C:\\Users\\test\\file.json",
+    "double_quote": "He said: \"JSON is awesome!\"",
+    "carriage_return": "line1\rline2",
+    "form_feed": "page1\fpage2"
+  }
+}

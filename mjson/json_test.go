@@ -6,8 +6,30 @@ import (
 )
 
 // go test -v  ./...
+// go test -v -run Test_UnmarshalJsonc
+func Test_UnmarshalJsonc(t *testing.T) {
+	str := `{
+		// 这是一个注释
+		"key1": "value1", /* 这是另一个注释 */
+		"key2": 123, // 数字值\
+		"name": "墨七"  
+	}`
+	var result map[string]any
+	err := UnmarshalJsonc([]byte(str), &result)
+	if err != nil {
+		t.Fatalf("UnmarshalJsonc error: %v", err)
+	}
+	if result["key1"] != "value1" {
+		t.Fatalf("key1 value incorrect: %v", result["key1"])
+	}
+	if num, ok := result["key2"].(float64); !ok || num != 123 {
+		t.Fatalf("key2 value incorrect: %v", result["key2"])
+	}
+	if result["name"] != "墨七" {
+		t.Fatalf("name value incorrect: %v", result["name"])
+	}
+}
 
-// go test -v -run TestMarshalAndUnmarshal
 func TestMarshalAndUnmarshal(t *testing.T) {
 	obj := map[string]int{
 		"a": 1,

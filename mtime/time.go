@@ -78,7 +78,9 @@ func ParseString(s string) (MTime, error) {
 			return MTime{t: timeFromFloatSeconds(f)}, nil
 		}
 	}
-	tt, err := dateparse.ParseAny(s)
+
+	loc := DefaultLocation()
+	tt, err := dateparse.ParseIn(s, loc)
 	if err != nil {
 		return MTime{}, err
 	}

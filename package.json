@@ -11,8 +11,8 @@
     "npm": ">=11"
   },
   "scripts": {
-    "git-sync": "ts-node script/git_sync.ts",
-    "clear-dir": "ts-node script/clear_dir.ts"
+    "git-sync": "bun run script/git_sync.ts",
+    "clear-dir": "bun run script/clear_dir.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

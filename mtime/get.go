@@ -1,7 +1,11 @@
 package mtime
 
 import (
+	"strconv"
 	"time"
+
+	"github.com/m-startgo/go-utils/mmath"
+	"github.com/m-startgo/go-utils/mstr"
 )
 
 // Now 返回当前时间的封装
@@ -69,4 +73,54 @@ func FormatDefaultFrom(v any) string {
 		return n.FormatDefault()
 	}
 	return tm.FormatDefault()
+}
+
+type GetTimeReturnType struct {
+	TimeUnix int64  `bson:"TimeUnix"`
+	TimeStr  string `bson:"TimeStr"`
+}
+
+func GetTime() (resData GetTimeReturnType) {
+	resData.TimeUnix = GetUnixInt64()
+	resData.TimeStr = UnixFormat(resData.TimeUnix)
+	return
+}
+
+func GetUnixInt64() int64 {
+	return time.Now().UnixNano() / 1e6
+}
+
+// ms=string | int64 毫秒数  return = 2006-01-02T15:04:05
+func UnixFormat(ms any) string {
+	timeMs := mstr.ToStr(ms)
+	if len(timeMs) < 1 {
+		timeMs = GetUnix()
+	}
+	T := MsToTime(timeMs, "0")
+	timeStr := T.Format(Lay_ss)
+	return timeStr
+}
+
+// 获取 13 位毫秒时间戳
+func GetUnix() string {
+	unix := time.Now().UnixNano() / 1e6
+	str := strconv.FormatInt(unix, 10)
+	return str
+}
+
+func MsToTime(ms any, diff string) time.Time {
+	msToStr := mstr.ToStr(ms)
+
+	a, _ := mmath.NewFromString(msToStr)
+	b, _ := mmath.NewFromString(diff)
+	diffDecimal := a.Add(b)
+
+	msStr := diffDecimal.String()
+
+	msInt, err := strconv.ParseInt(msStr, 10, 64)
+	if err != nil {
+		return time.Now()
+	}
+	tm := time.Unix(0, msInt*int64(time.Millisecond))
+	return tm
 }

@@ -6,6 +6,19 @@ import (
 	"time"
 )
 
+// go test -v -run TestLoc
+func TestLoc(t *testing.T) {
+	// shLoc, err := time.LoadLocation("Asia/Shanghai")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// SetDefaultLocation(shLoc)
+
+	// mytime, _ := ParseInt64(1765643957726)
+
+	// s := mytime.Format(DefaultToken)
+}
+
 // TestParseAndFormat 覆盖常见解析与格式化场景。
 func TestParseAndFormat(t *testing.T) {
 	// ISO-like string

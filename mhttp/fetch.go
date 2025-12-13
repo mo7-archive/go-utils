@@ -2,7 +2,6 @@ package mhttp
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/gocolly/colly/v2"
 )
 
 // FetchOptions 请求选项
@@ -26,15 +27,14 @@ type FetchOptions struct {
 	Method     string // 允许值：GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS（不区分大小写，会在 Do 中规范化为大写）
 	// MaxBodySize 限制读取响应体的最大字节数，0 表示不限制
 	MaxBodySize int64
+	// Proxy 可选：为本次请求使用的代理地址，例如 "http://127.0.0.1:7890"
+	Proxy string
 }
 
 // Fetch 请求封装
 type Fetch struct {
 	opts FetchOptions
 }
-
-// package-level transport 用于复用连接池
-var defaultTransport = &http.Transport{}
 
 // NewFetch 创建一个 Fetch 实例
 func NewFetch(opts FetchOptions) *Fetch {
@@ -120,34 +120,66 @@ func (f *Fetch) do(opts FetchOptions) ([]byte, error) {
 		retryDelay = 1
 	}
 
-	client := &http.Client{Transport: defaultTransport, Timeout: time.Duration(tout) * time.Second}
-
+	// 使用 Colly 进行请求实现。Colly 会在内部处理连接重用、代理、超时等。
 	var lastErr error
 
+	// 组装 headers
+	hdr := http.Header{}
+	for k, v := range opts.Headers {
+		hdr.Set(k, v)
+	}
+
 	for attempt := 0; attempt <= retry; attempt++ {
-		// context with timeout for this attempt
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(tout)*time.Second)
-		defer cancel()
+		// 创建 Collector
+		c := colly.NewCollector()
+		c.SetRequestTimeout(time.Duration(tout) * time.Second)
+
+		if opts.Proxy != "" {
+			if perr := c.SetProxy(opts.Proxy); perr != nil {
+				return nil, fmt.Errorf("invalid proxy url: %w", perr)
+			}
+		}
+
+		var respBody []byte
+		var respStatus int
+		var respErr error
+
+		c.OnResponse(func(r *colly.Response) {
+			respStatus = r.StatusCode
+			if opts.MaxBodySize > 0 && int64(len(r.Body)) > opts.MaxBodySize {
+				respBody = r.Body[:opts.MaxBodySize]
+			} else {
+				respBody = r.Body
+			}
+		})
+
+		c.OnError(func(r *colly.Response, e error) {
+			if r != nil {
+				respStatus = r.StatusCode
+				if r.Body != nil {
+					// 限制大小
+					if opts.MaxBodySize > 0 && int64(len(r.Body)) > opts.MaxBodySize {
+						respErr = fmt.Errorf("http status %d: %s", r.StatusCode, string(r.Body[:opts.MaxBodySize]))
+					} else {
+						respErr = fmt.Errorf("http status %d: %s", r.StatusCode, string(r.Body))
+					}
+				} else {
+					respErr = fmt.Errorf("http status %d: %w", r.StatusCode, e)
+				}
+			} else {
+				respErr = e
+			}
+		})
 
 		var bodyReader io.Reader
 		if rawBody != nil {
 			bodyReader = bytes.NewReader(rawBody)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, opts.Method, u.String(), bodyReader)
-		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
-		}
-
-		// headers
-		for k, v := range opts.Headers {
-			req.Header.Set(k, v)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("request error: %w", err)
-			// 网络/超时类错误重试
+		// 发起请求（同步）
+		reqErr := c.Request(opts.Method, u.String(), bodyReader, nil, hdr)
+		if reqErr != nil {
+			lastErr = fmt.Errorf("request error: %w", reqErr)
 			if attempt < retry {
 				time.Sleep(time.Duration(retryDelay) * time.Second)
 				continue
@@ -155,34 +187,26 @@ func (f *Fetch) do(opts FetchOptions) ([]byte, error) {
 			return nil, lastErr
 		}
 
-		// ensure body closed
-		var respBody []byte
-		func() {
-			defer resp.Body.Close()
-			var reader io.Reader = resp.Body
-			if opts.MaxBodySize > 0 {
-				reader = io.LimitReader(resp.Body, opts.MaxBodySize)
-			}
-			b, rerr := io.ReadAll(reader)
-			if rerr != nil {
-				lastErr = fmt.Errorf("read body: %w", rerr)
-				return
-			}
-			respBody = b
-		}()
-
-		// 判断状态码
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			// 对 5xx 做重试，对 4xx 一般不重试
-			lastErr = fmt.Errorf("http status %d: %s", resp.StatusCode, string(respBody))
-			if resp.StatusCode >= 500 && attempt < retry {
+		if respErr != nil {
+			lastErr = respErr
+			// 对 5xx 做重试
+			if respStatus >= 500 && attempt < retry {
 				time.Sleep(time.Duration(retryDelay) * time.Second)
 				continue
 			}
 			return nil, lastErr
 		}
 
-		// 成功
+		// 若没有通过 OnError 报错，但状态非 2xx，也视为错误
+		if respStatus < 200 || respStatus >= 300 {
+			lastErr = fmt.Errorf("http status %d: %s", respStatus, string(respBody))
+			if respStatus >= 500 && attempt < retry {
+				time.Sleep(time.Duration(retryDelay) * time.Second)
+				continue
+			}
+			return nil, lastErr
+		}
+
 		return respBody, nil
 	}
 

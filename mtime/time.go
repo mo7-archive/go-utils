@@ -27,13 +27,14 @@ type MTime struct {
 var defaultLoc atomic.Value
 
 func init() {
-	defaultLoc.Store(time.UTC)
+	defaultLoc.Store(time.Local)
 }
 
 // DefaultLocation 返回当前默认时区（用于数值时间戳解析），默认 UTC。
 func DefaultLocation() *time.Location {
 	v := defaultLoc.Load()
-	if loc, ok := v.(*time.Location); ok {
+	loc, ok := v.(*time.Location)
+	if ok {
 		return loc
 	}
 	return time.UTC
